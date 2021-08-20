@@ -5,6 +5,7 @@ import urllib3
 import argparse
 import logging
 import sys
+import muggle_ocr
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -55,10 +56,10 @@ with open('district.json', 'r') as f:
     district_dict = json.load(f)
 
 class Report(object):
-    def __init__(self, username, password, config):
-        self.username = username
-        self.password = password
+    def __init__(self, args, config):
+        self.args = args
         self.config = config
+        self.sdk = muggle_ocr.SDK(model_type=muggle_ocr.ModelType.OCR)
 
         self.login()
         self.send_report()
@@ -70,14 +71,27 @@ class Report(object):
         response = self.session.get(url)
         assert response.status_code == 200
         cookie = response.cookies
+        CAS_LT_catcher = r'name="CAS_LT" value="LT-[A-Za-z0-9]+"'
+        CAS_LT = re.findall(CAS_LT_catcher, response.text)
+        assert(len(CAS_LT) > 0)
+        CAS_LT = CAS_LT[0].split('=')[-1].strip('"')
+
+        url = 'https://passport.ustc.edu.cn/validatecode.jsp?type=login'
+        headers = {
+            'Cookie': f"lang=zh; JSESSIONID={cookie['JSESSIONID']}"
+        }
+        response = self.session.get(url, headers=headers)
+        assert response.status_code == 200
 
         data = {
             'model': 'uplogin.jsp',
+            'CAS_LT': CAS_LT,
+            'LT': self.sdk.predict(image_bytes=response.content),
             'service': 'https://weixine.ustc.edu.cn/2020/caslogin',
             'warn': '',
-            'showCode': '',
-            'username': self.username,
-            'password': self.password,
+            'showCode': 1,
+            'username': self.args.username,
+            'password': self.args.password,
             'button': ''
         }
         headers = {
@@ -123,6 +137,9 @@ class Report(object):
             'last_touch_sars_detail': '',
             'is_danger': 0,
             'is_goto_danger': 0,
+            'jinji_lxr': self.args.contact_name,
+            'jinji_guanxi': self.args.contact_relation,
+            'jiji_mobile': self.args.contact_phone,
             'other_detail': ''
         }
         headers = {
@@ -136,6 +153,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--username", type=str)
     parser.add_argument("--password", type=str)
+    parser.add_argument("--contact_name", type=str)
+    parser.add_argument("--contact_phone", type=str)
+    parser.add_argument("--contact_relation", type=str)
     args = parser.parse_args()
 
     with open('config.json', 'r') as f:
@@ -148,5 +168,5 @@ if __name__ == '__main__':
         'is_inschool': inschool_dict[config['校区']],
         'now_status': status_dict[config['当前状态']]
     }
-    Report(args.username, args.password, processed_config)
+    Report(args, processed_config)
 
